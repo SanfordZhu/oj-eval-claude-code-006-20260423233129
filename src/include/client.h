@@ -270,28 +270,24 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
         }
     }
 
-    // If frontier is too large, fall back to simple heuristic (won't happen in practice)
+    // If frontier is too large, fall back to simple heuristic to avoid exponential blowup
     int n = frontier.size();
-    if (n > 80) {
+    if (n > 25) {
         // Use simple probability method
         double mine_prob[30][30];
         bool in_frontier[30][30] = {false};
+        double base_p = (double)mines_remaining / unknown_count;
         for (int i = 0; i < rows; i++) {
             for (int j = 0; j < columns; j++) {
-                mine_prob[i][j] = 0;
-                in_frontier[i][j] = false;
+                if (client_grid[i][j] == -2) {
+                    mine_prob[i][j] = base_p;
+                    in_frontier[i][j] = false;
+                }
             }
         }
         for (auto &cell : frontier) {
             in_frontier[cell.first][cell.second] = true;
-        }
-        double base_p = (double)mines_remaining / unknown_count;
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < columns; j++) {
-                if (client_grid[i][j] == -2 && !in_frontier[i][j]) {
-                    mine_prob[i][j] = base_p;
-                }
-            }
+            mine_prob[cell.first][cell.second] = 0;
         }
         for (int i = 0; i < rows; i++) {
             for (int j = 0; j < columns; j++) {
@@ -320,7 +316,7 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
                 }
             }
         }
-        // Find cell with minimum probability, better tie-breaking
+        // Find cell with minimum probability, tie-break by fewer unknown neighbors (more constrained)
         double min_p = 2.0;
         int min_unknown = 9;
         out_r = 0;
