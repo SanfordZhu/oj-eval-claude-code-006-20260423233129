@@ -272,7 +272,7 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
 
     // If frontier is too large, fall back to simple heuristic to avoid exponential blowup
     int n = frontier.size();
-    if (n > 15) {
+    if (n > 12) {
         // Use simple probability method
         double mine_prob[30][30];
         bool in_frontier[30][30] = {false};
