@@ -12,7 +12,7 @@
 
 extern int rows;         // The count of rows of the game map. You MUST NOT modify its name.
 extern int columns;      // The count of columns of the game map. You MUST NOT modify its name.
-extern int total_mines;  // The count of mines of the game map.
+extern int total_mines;  // The count of mines of the game map. You MUST NOT modify its name.
 
 void Execute(int r, int c, int type);
 
@@ -222,23 +222,28 @@ void backtrack(int var_idx, int mines_placed, int total_vars, const std::vector<
 }
 
 /**
- * Compute mine probability using full constraint satisfaction
+ * Compute mine probability using full constraint satisfaction on connected components
  */
 void find_best_guess(int &out_r, int &out_c, int &out_type) {
-    // Step 1: Collect all frontier cells (unknown adjacent to opened)
-    std::vector<std::pair<int, int>> frontier;
-    int cell_index[30][30];
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < columns; j++) {
-            cell_index[i][j] = -1;
-        }
-    }
-
-    bool connected[30][30] = {false};
+    // Initialize probability to base global probability
+    double mine_prob[30][30];
+    double base_p = (double)mines_remaining / unknown_count;
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
             if (client_grid[i][j] == -2) {
-                // Check if adjacent to any opened cell
+                mine_prob[i][j] = base_p;
+            }
+        }
+    }
+
+    // Collect all frontier unknown cells that are adjacent to opened cells
+    bool visited[30][30] = {false};
+    bool in_frontier[30][30] = {false};
+
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < columns; j++) {
+            if (client_grid[i][j] == -2 && !visited[i][j]) {
+                // Check if this cell is adjacent to any opened cell -> part of frontier
                 bool is_frontier = false;
                 for (int d = 0; d < 8; d++) {
                     int ni = i + client_dx[d];
@@ -248,212 +253,184 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
                         break;
                     }
                 }
-                if (is_frontier) {
-                    cell_index[i][j] = frontier.size();
-                    frontier.push_back({i, j});
-                }
-            }
-        }
-    }
+                if (!is_frontier) continue;
 
-    // If no frontier, just pick any unknown
-    if (frontier.empty()) {
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < columns; j++) {
-                if (client_grid[i][j] == -2) {
-                    out_r = i;
-                    out_c = j;
-                    out_type = 0;
-                    return;
-                }
-            }
-        }
-    }
+                // BFS to find connected component of frontier
+                std::vector<std::pair<int, int>> component;
+                std::queue<std::pair<int, int>> q;
+                q.push({i, j});
+                visited[i][j] = true;
+                component.push_back({i, j});
 
-    // If frontier is too large, fall back to simple heuristic to avoid exponential blowup
-    int n = frontier.size();
-    if (n > 12) {
-        // Use simple probability method
-        double mine_prob[30][30];
-        bool in_frontier[30][30] = {false};
-        double base_p = (double)mines_remaining / unknown_count;
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < columns; j++) {
-                if (client_grid[i][j] == -2) {
-                    mine_prob[i][j] = base_p;
-                    in_frontier[i][j] = false;
-                }
-            }
-        }
-        for (auto &cell : frontier) {
-            in_frontier[cell.first][cell.second] = true;
-            mine_prob[cell.first][cell.second] = 0;
-        }
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < columns; j++) {
-                if (client_grid[i][j] < 0) continue;
-                int k = client_grid[i][j];
-                std::vector<std::pair<int, int>> neighbors_unknown;
-                int marked_around = 0;
-                for (int d = 0; d < 8; d++) {
-                    int ni = i + client_dx[d];
-                    int nj = j + client_dy[d];
-                    if (ni < 0 || ni >= rows || nj < 0 || nj >= columns) continue;
-                    if (client_grid[ni][nj] == -2) {
-                        neighbors_unknown.push_back({ni, nj});
-                    } else if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) {
-                        marked_around++;
-                    }
-                }
-                if (neighbors_unknown.empty()) continue;
-                int required_mines = k - marked_around;
-                if (required_mines <= 0) continue;
-                double p = (double)required_mines / neighbors_unknown.size();
-                for (auto &cell : neighbors_unknown) {
-                    if (mine_prob[cell.first][cell.second] < p || (in_frontier[cell.first][cell.second] && mine_prob[cell.first][cell.second] == 0)) {
-                        mine_prob[cell.first][cell.second] = p;
-                    }
-                }
-            }
-        }
-        // Find cell with minimum probability, tie-break by fewer unknown neighbors (more constrained)
-        double min_p = 2.0;
-        int min_unknown = 9;
-        out_r = 0;
-        out_c = 0;
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < columns; j++) {
-                if (client_grid[i][j] != -2) continue;
-                if (mine_prob[i][j] < min_p) {
-                    int unknown_adj = 0;
+                while (!q.empty()) {
+                    auto curr = q.front();
+                    q.pop();
+                    int x = curr.first;
+                    int y = curr.second;
+                    // Check 4 directions for connected unknowns that are also frontier
                     for (int d = 0; d < 8; d++) {
-                        int ni = i + client_dx[d];
-                        int nj = j + client_dy[d];
-                        if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
-                            unknown_adj++;
+                        int nx = x + client_dx[d];
+                        int ny = y + client_dy[d];
+                        if (nx >= 0 && nx < rows && ny >= 0 && ny < columns && !visited[nx][ny] && client_grid[nx][ny] == -2) {
+                            // Check if connected component is frontier (adjacent to opened)
+                            bool comp_is_frontier = false;
+                            for (int d2 = 0; d2 < 8; d2++) {
+                                int n2x = nx + client_dx[d2];
+                                int n2y = ny + client_dy[d2];
+                                if (n2x >= 0 && n2x < rows && n2y >= 0 && n2y < columns && client_grid[n2x][n2y] >= 0) {
+                                    comp_is_frontier = true;
+                                    break;
+                                }
+                            }
+                            if (comp_is_frontier) {
+                                visited[nx][ny] = true;
+                                q.push({nx, ny});
+                                component.push_back({nx, ny});
+                            }
                         }
                     }
-                    min_p = mine_prob[i][j];
-                    min_unknown = unknown_adj;
-                    out_r = i;
-                    out_c = j;
-                } else if (mine_prob[i][j] == min_p) {
-                    int unknown_adj = 0;
-                    for (int d = 0; d < 8; d++) {
-                        int ni = i + client_dx[d];
-                        int nj = j + client_dy[d];
-                        if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
-                            unknown_adj++;
+                }
+
+                // If component is small enough, do full constraint solving
+                if (component.size() <= 12) {
+                    // Map cell to index in component
+                    int cell_index[30][30];
+                    for (int x = 0; x < rows; x++) {
+                        for (int y = 0; y < columns; y++) {
+                            cell_index[x][y] = -1;
                         }
                     }
-                    if (unknown_adj < min_unknown) {
-                        min_unknown = unknown_adj;
-                        out_r = i;
-                        out_c = j;
+                    for (int idx = 0; idx < component.size(); idx++) {
+                        int x = component[idx].first;
+                        int y = component[idx].second;
+                        cell_index[x][y] = idx;
+                        in_frontier[x][y] = true;
+                    }
+
+                    // Collect all constraints from opened cells touching this component
+                    std::vector<Constraint> constraints;
+                    for (int x = 0; x < rows; x++) {
+                        for (int y = 0; y < columns; y++) {
+                            if (client_grid[x][y] < 0) continue;
+                            int k = client_grid[x][y];
+                            int marked_around = 0;
+                            Constraint c;
+                            for (int d = 0; d < 8; d++) {
+                                int nx = x + client_dx[d];
+                                int ny = y + client_dy[d];
+                                if (nx < 0 || nx >= rows || ny < 0 || ny >= columns) continue;
+                                if (client_grid[nx][ny] == -1 || mine_marked[nx][ny]) {
+                                    marked_around++;
+                                } else if (client_grid[nx][ny] == -2 && cell_index[nx][ny] >= 0) {
+                                    c.vars.push_back(cell_index[nx][ny]);
+                                }
+                            }
+                            c.required = k - marked_around;
+                            if (!c.vars.empty()) {
+                                constraints.push_back(c);
+                            }
+                        }
+                    }
+
+                    // Backtrack to count solutions
+                    int n = component.size();
+                    total_solutions = 0;
+                    memset(mine_count, 0, sizeof(mine_count));
+                    backtrack(0, 0, n, constraints);
+
+                    // Update probabilities
+                    if (total_solutions > 0) {
+                        for (int idx = 0; idx < n; idx++) {
+                            int x = component[idx].first;
+                            int y = component[idx].second;
+                            double prob = (double)mine_count[idx] / total_solutions;
+                            mine_prob[x][y] = prob;
+                        }
                     }
                 }
+                // For larger components, leave them at base probability
             }
         }
-        if (mine_prob[out_r][out_c] >= 1.0 - 1e-9) {
-            out_type = 1;
-        } else {
-            out_type = 0;
-        }
-        return;
     }
 
-    // Step 2: Collect all constraints
-    std::vector<Constraint> constraints;
-    bool visited[30][30] = {false};
+    // For any frontier cell that we didn't do full solving on, use simple probability from adjacent cells
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
             if (client_grid[i][j] < 0) continue;
             int k = client_grid[i][j];
+            std::vector<std::pair<int, int>> neighbors_unknown;
             int marked_around = 0;
-            Constraint c;
             for (int d = 0; d < 8; d++) {
                 int ni = i + client_dx[d];
                 int nj = j + client_dy[d];
                 if (ni < 0 || ni >= rows || nj < 0 || nj >= columns) continue;
-                if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) {
+                if (client_grid[ni][nj] == -2) {
+                    neighbors_unknown.push_back({ni, nj});
+                } else if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) {
                     marked_around++;
-                } else if (client_grid[ni][nj] == -2 && cell_index[ni][nj] >= 0) {
-                    c.vars.push_back(cell_index[ni][nj]);
                 }
             }
-            c.required = k - marked_around;
-            if (!c.vars.empty()) {
-                constraints.push_back(c);
+            if (neighbors_unknown.empty()) continue;
+            int required_mines = k - marked_around;
+            if (required_mines <= 0) continue;
+            double p = (double)required_mines / neighbors_unknown.size();
+            for (auto &cell : neighbors_unknown) {
+                int x = cell.first;
+                int y = cell.second;
+                // If we haven't computed exact probability, or p is higher than current probability, update
+                if (!in_frontier[x][y] || p > mine_prob[x][y]) {
+                    mine_prob[x][y] = p;
+                }
             }
         }
     }
 
-    // Step 3: Backtrack to count solutions and mine frequencies
-    total_solutions = 0;
-    memset(mine_count, 0, sizeof(mine_count));
-    memset(current_assignment, 0, sizeof(current_assignment));
-    backtrack(0, 0, n, constraints);
+    // Find the unknown cell with minimum probability of being mine
+    // Tie-break: prefer cell with fewer unknown adjacent (more constrained)
+    double min_prob = 1.0;
+    int min_unknown_adj = 9;
+    out_r = 0;
+    out_c = 0;
 
-    // If no solutions found (shouldn't happen), fall back to base probability
-    if (total_solutions == 0) {
-        double base_p = (double)mines_remaining / unknown_count;
-        double min_p = base_p;
-        int min_unknown = 9;
-        out_r = frontier[0].first;
-        out_c = frontier[0].second;
-        for (auto &cell : frontier) {
-            int i = cell.first;
-            int j = cell.second;
-            int unknown_adj = 0;
-            for (int d = 0; d < 8; d++) {
-                int ni = i + client_dx[d];
-                int nj = j + client_dy[d];
-                if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
-                    unknown_adj++;
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < columns; j++) {
+            if (client_grid[i][j] != -2) continue;
+
+            if (mine_prob[i][j] < min_prob) {
+                int unknown_adj = 0;
+                for (int d = 0; d < 8; d++) {
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
+                    if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
+                        unknown_adj++;
+                    }
                 }
-            }
-            if (base_p < min_p || (base_p == min_p && unknown_adj < min_unknown)) {
-                min_p = base_p;
-                min_unknown = unknown_adj;
+                min_prob = mine_prob[i][j];
+                min_unknown_adj = unknown_adj;
                 out_r = i;
                 out_c = j;
-            }
-        }
-    } else {
-        // Find cell with minimum probability of being mine
-        double min_prob = 1.0;
-        int min_unknown = 9;
-        out_r = frontier[0].first;
-        out_c = frontier[0].second;
-
-        for (int i = 0; i < n; i++) {
-            double prob = (double)mine_count[i] / total_solutions;
-            int r = frontier[i].first;
-            int c = frontier[i].second;
-
-            // Count unknown adjacent for tie-breaking
-            int unknown_adj = 0;
-            for (int d = 0; d < 8; d++) {
-                int nr = r + client_dx[d];
-                int nc = c + client_dy[d];
-                if (nr >= 0 && nr < rows && nc >= 0 && nc < columns && client_grid[nr][nc] == -2) {
-                    unknown_adj++;
+            } else if (mine_prob[i][j] == min_prob) {
+                int unknown_adj = 0;
+                for (int d = 0; d < 8; d++) {
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
+                    if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
+                        unknown_adj++;
+                    }
+                }
+                if (unknown_adj < min_unknown_adj) {
+                    min_unknown_adj = unknown_adj;
+                    out_r = i;
+                    out_c = j;
                 }
             }
-
-            if (prob < min_prob || (prob == min_prob && unknown_adj < min_unknown)) {
-                min_prob = prob;
-                min_unknown = unknown_adj;
-                out_r = r;
-                out_c = c;
-            }
         }
+    }
 
-        if (min_prob >= 1.0 - 1e-9) {
-            out_type = 1;
-        } else {
-            out_type = 0;
-        }
+    if (mine_prob[out_r][out_c] >= 1.0 - 1e-9) {
+        out_type = 1;
+    } else {
+        out_type = 0;
     }
 }
 
@@ -472,7 +449,7 @@ void Decide() {
         return;
     }
 
-    // No obvious moves, use full constraint-based probability guessing
+    // No obvious moves, use constraint-based probability guessing with connected component optimization
     find_best_guess(r, c, type);
     Execute(r, c, type);
 }
