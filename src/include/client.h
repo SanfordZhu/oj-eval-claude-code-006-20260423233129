@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <cmath>
+#include <cstring>
 
 extern int rows;         // The count of rows of the game map. You MUST NOT modify its name.
 extern int columns;      // The count of columns of the game map. You MUST NOT modify its name.
@@ -122,20 +123,12 @@ bool find_obvious_move(int &out_r, int &out_c, int &out_type) {
                 if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) marked_around++;
             }
 
-            // If number of marked around equals the number, all unknown neighbors are safe - open them
+            // If number of marked around equals the number, all unknown neighbors are safe - auto-explore
             if (marked_around == k && unknown_around > 0) {
-                // Find an unknown to open
-                for (int d = 0; d < 8; d++) {
-                    int ni = i + client_dx[d];
-                    int nj = j + client_dy[d];
-                    if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
-                        // AutoExplore on this cell (i,j) - it will automatically open all unknown neighbors
-                        out_r = i;
-                        out_c = j;
-                        out_type = 2;  // AutoExplore
-                        return true;
-                    }
-                }
+                out_r = i;
+                out_c = j;
+                out_type = 2;  // AutoExplore
+                return true;
             }
 
             // If unknown neighbors equals the remaining mines to find, all must be mines - mark them
@@ -185,37 +178,85 @@ bool find_obvious_move(int &out_r, int &out_c, int &out_type) {
     return false;
 }
 
+// Structure for a constraint: a set of variables (indices into frontier array) and required mines
+struct Constraint {
+    std::vector<int> vars;
+    int required;
+};
+
+int total_solutions;
+int mine_count[100];
+bool current_assignment[100];
+
+void backtrack(int var_idx, int mines_placed, int total_vars, const std::vector<Constraint> &constraints) {
+    // Prune if we can't satisfy constraints
+    if (mines_placed > mines_remaining) return;
+    if (mines_placed + (total_vars - var_idx) < mines_remaining) return;
+
+    if (var_idx == total_vars) {
+        // Check all constraints
+        for (const Constraint &c : constraints) {
+            int cnt = 0;
+            for (int v : c.vars) {
+                if (current_assignment[v]) cnt++;
+            }
+            if (cnt != c.required) return;
+        }
+        // Valid solution found
+        total_solutions++;
+        for (int i = 0; i < total_vars; i++) {
+            if (current_assignment[i]) mine_count[i]++;
+        }
+        return;
+    }
+
+    // Try not placing mine
+    current_assignment[var_idx] = false;
+    backtrack(var_idx + 1, mines_placed, total_vars, constraints);
+
+    // Try placing mine, only if we haven't exceeded total
+    if (mines_placed < mines_remaining) {
+        current_assignment[var_idx] = true;
+        backtrack(var_idx + 1, mines_placed + 1, total_vars, constraints);
+    }
+}
+
 /**
- * Compute mine probability for each unknown cell using the constraint-based approach.
- * Find the cell with lowest probability of being a mine.
+ * Compute mine probability using full constraint satisfaction
  */
 void find_best_guess(int &out_r, int &out_c, int &out_type) {
-    // Count how many mines each frontier cell must have based on constraints
-    std::vector<std::pair<int, int>> frontier;  // unknown cells adjacent to opened cells
-    bool in_frontier[30][30] = {false};
+    // Step 1: Collect all frontier cells (unknown adjacent to opened)
+    std::vector<std::pair<int, int>> frontier;
+    int cell_index[30][30];
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < columns; j++) {
+            cell_index[i][j] = -1;
+        }
+    }
 
+    bool connected[30][30] = {false};
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
             if (client_grid[i][j] == -2) {
                 // Check if adjacent to any opened cell
-                bool adjacent = false;
+                bool is_frontier = false;
                 for (int d = 0; d < 8; d++) {
                     int ni = i + client_dx[d];
                     int nj = j + client_dy[d];
                     if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] >= 0) {
-                        adjacent = true;
+                        is_frontier = true;
                         break;
                     }
                 }
-                if (adjacent) {
+                if (is_frontier) {
+                    cell_index[i][j] = frontier.size();
                     frontier.push_back({i, j});
-                    in_frontier[i][j] = true;
                 }
             }
         }
     }
 
-    // If no frontier cell (all unknown isolated), just pick any unknown
+    // If no frontier, just pick any unknown
     if (frontier.empty()) {
         for (int i = 0; i < rows; i++) {
             for (int j = 0; j < columns; j++) {
@@ -229,101 +270,194 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
         }
     }
 
-    // Build probability map
-    double mine_prob[30][30] = {0};
-    // For non-frontier unknowns, default probability based on global mine density
-    double base_p = (double)mines_remaining / unknown_count;
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < columns; j++) {
-            if (client_grid[i][j] == -2 && !in_frontier[i][j]) {
-                mine_prob[i][j] = base_p;
+    // If frontier is too large, fall back to simple heuristic (won't happen in practice)
+    int n = frontier.size();
+    if (n > 80) {
+        // Use simple probability method
+        double mine_prob[30][30];
+        bool in_frontier[30][30] = {false};
+        for (int i = 0; i < rows; i++) {
+            for (int j = 0; j < columns; j++) {
+                mine_prob[i][j] = 0;
+                in_frontier[i][j] = false;
             }
         }
+        for (auto &cell : frontier) {
+            in_frontier[cell.first][cell.second] = true;
+        }
+        double base_p = (double)mines_remaining / unknown_count;
+        for (int i = 0; i < rows; i++) {
+            for (int j = 0; j < columns; j++) {
+                if (client_grid[i][j] == -2 && !in_frontier[i][j]) {
+                    mine_prob[i][j] = base_p;
+                }
+            }
+        }
+        for (int i = 0; i < rows; i++) {
+            for (int j = 0; j < columns; j++) {
+                if (client_grid[i][j] < 0) continue;
+                int k = client_grid[i][j];
+                std::vector<std::pair<int, int>> neighbors_unknown;
+                int marked_around = 0;
+                for (int d = 0; d < 8; d++) {
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
+                    if (ni < 0 || ni >= rows || nj < 0 || nj >= columns) continue;
+                    if (client_grid[ni][nj] == -2) {
+                        neighbors_unknown.push_back({ni, nj});
+                    } else if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) {
+                        marked_around++;
+                    }
+                }
+                if (neighbors_unknown.empty()) continue;
+                int required_mines = k - marked_around;
+                if (required_mines <= 0) continue;
+                double p = (double)required_mines / neighbors_unknown.size();
+                for (auto &cell : neighbors_unknown) {
+                    if (mine_prob[cell.first][cell.second] < p || (in_frontier[cell.first][cell.second] && mine_prob[cell.first][cell.second] == 0)) {
+                        mine_prob[cell.first][cell.second] = p;
+                    }
+                }
+            }
+        }
+        // Find cell with minimum probability, better tie-breaking
+        double min_p = 2.0;
+        int min_unknown = 9;
+        out_r = 0;
+        out_c = 0;
+        for (int i = 0; i < rows; i++) {
+            for (int j = 0; j < columns; j++) {
+                if (client_grid[i][j] != -2) continue;
+                if (mine_prob[i][j] < min_p) {
+                    int unknown_adj = 0;
+                    for (int d = 0; d < 8; d++) {
+                        int ni = i + client_dx[d];
+                        int nj = j + client_dy[d];
+                        if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
+                            unknown_adj++;
+                        }
+                    }
+                    min_p = mine_prob[i][j];
+                    min_unknown = unknown_adj;
+                    out_r = i;
+                    out_c = j;
+                } else if (mine_prob[i][j] == min_p) {
+                    int unknown_adj = 0;
+                    for (int d = 0; d < 8; d++) {
+                        int ni = i + client_dx[d];
+                        int nj = j + client_dy[d];
+                        if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
+                            unknown_adj++;
+                        }
+                    }
+                    if (unknown_adj < min_unknown) {
+                        min_unknown = unknown_adj;
+                        out_r = i;
+                        out_c = j;
+                    }
+                }
+            }
+        }
+        if (mine_prob[out_r][out_c] >= 1.0 - 1e-9) {
+            out_type = 1;
+        } else {
+            out_type = 0;
+        }
+        return;
     }
 
-    // For each opened cell, calculate probability based on the constraint
+    // Step 2: Collect all constraints
+    std::vector<Constraint> constraints;
+    bool visited[30][30] = {false};
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
             if (client_grid[i][j] < 0) continue;
-
             int k = client_grid[i][j];
-            std::vector<std::pair<int, int>> neighbors_unknown;
             int marked_around = 0;
-
+            Constraint c;
             for (int d = 0; d < 8; d++) {
                 int ni = i + client_dx[d];
                 int nj = j + client_dy[d];
                 if (ni < 0 || ni >= rows || nj < 0 || nj >= columns) continue;
-                if (client_grid[ni][nj] == -2) {
-                    neighbors_unknown.push_back({ni, nj});
-                } else if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) {
+                if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) {
                     marked_around++;
+                } else if (client_grid[ni][nj] == -2 && cell_index[ni][nj] >= 0) {
+                    c.vars.push_back(cell_index[ni][nj]);
                 }
             }
-
-            if (neighbors_unknown.empty()) continue;
-
-            int required_mines = k - marked_around;
-            if (required_mines <= 0) continue;
-
-            double p = (double)required_mines / neighbors_unknown.size();
-            for (auto &n : neighbors_unknown) {
-                if (mine_prob[n.first][n.second] < p || (in_frontier[n.first][n.second] && mine_prob[n.first][n.second] == 0)) {
-                    mine_prob[n.first][n.second] = p;
-                }
+            c.required = k - marked_around;
+            if (!c.vars.empty()) {
+                constraints.push_back(c);
             }
         }
     }
 
-    // Find the unknown cell with minimum probability of being a mine
-    // When probabilities are equal, choose cell with fewer adjacent unknowns (more constrained, more information gain)
-    double min_p = 2.0;
-    int min_unknown = 9;  // max possible unknown adjacent is 8
-    out_r = 0;
-    out_c = 0;
+    // Step 3: Backtrack to count solutions and mine frequencies
+    total_solutions = 0;
+    memset(mine_count, 0, sizeof(mine_count));
+    memset(current_assignment, 0, sizeof(current_assignment));
+    backtrack(0, 0, n, constraints);
 
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < columns; j++) {
-            if (client_grid[i][j] != -2) continue;
-
-            if (mine_prob[i][j] < min_p) {
-                // Count unknown neighbors
-                int unknown_adjacent = 0;
-                for (int d = 0; d < 8; d++) {
-                    int ni = i + client_dx[d];
-                    int nj = j + client_dy[d];
-                    if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
-                        unknown_adjacent++;
-                    }
+    // If no solutions found (shouldn't happen), fall back to base probability
+    if (total_solutions == 0) {
+        double base_p = (double)mines_remaining / unknown_count;
+        double min_p = base_p;
+        int min_unknown = 9;
+        out_r = frontier[0].first;
+        out_c = frontier[0].second;
+        for (auto &cell : frontier) {
+            int i = cell.first;
+            int j = cell.second;
+            int unknown_adj = 0;
+            for (int d = 0; d < 8; d++) {
+                int ni = i + client_dx[d];
+                int nj = j + client_dy[d];
+                if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
+                    unknown_adj++;
                 }
-                min_p = mine_prob[i][j];
-                min_unknown = unknown_adjacent;
+            }
+            if (base_p < min_p || (base_p == min_p && unknown_adj < min_unknown)) {
+                min_p = base_p;
+                min_unknown = unknown_adj;
                 out_r = i;
                 out_c = j;
-            } else if (mine_prob[i][j] == min_p) {
-                // Count unknown neighbors
-                int unknown_adjacent = 0;
-                for (int d = 0; d < 8; d++) {
-                    int ni = i + client_dx[d];
-                    int nj = j + client_dy[d];
-                    if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
-                        unknown_adjacent++;
-                    }
-                }
-                if (unknown_adjacent < min_unknown) {
-                    min_unknown = unknown_adjacent;
-                    out_r = i;
-                    out_c = j;
-                }
             }
         }
-    }
-
-    // If probability is 1.0, we should mark it instead of clicking
-    if (mine_prob[out_r][out_c] >= 1.0 - 1e-9) {
-        out_type = 1;  // mark as mine
     } else {
-        out_type = 0;  // click to open
+        // Find cell with minimum probability of being mine
+        double min_prob = 1.0;
+        int min_unknown = 9;
+        out_r = frontier[0].first;
+        out_c = frontier[0].second;
+
+        for (int i = 0; i < n; i++) {
+            double prob = (double)mine_count[i] / total_solutions;
+            int r = frontier[i].first;
+            int c = frontier[i].second;
+
+            // Count unknown adjacent for tie-breaking
+            int unknown_adj = 0;
+            for (int d = 0; d < 8; d++) {
+                int nr = r + client_dx[d];
+                int nc = c + client_dy[d];
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < columns && client_grid[nr][nc] == -2) {
+                    unknown_adj++;
+                }
+            }
+
+            if (prob < min_prob || (prob == min_prob && unknown_adj < min_unknown)) {
+                min_prob = prob;
+                min_unknown = unknown_adj;
+                out_r = r;
+                out_c = c;
+            }
+        }
+
+        if (min_prob >= 1.0 - 1e-9) {
+            out_type = 1;
+        } else {
+            out_type = 0;
+        }
     }
 }
 
@@ -342,7 +476,7 @@ void Decide() {
         return;
     }
 
-    // No obvious moves, make the best guess based on probability
+    // No obvious moves, use full constraint-based probability guessing
     find_best_guess(r, c, type);
     Execute(r, c, type);
 }
