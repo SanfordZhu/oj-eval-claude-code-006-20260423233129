@@ -23,8 +23,8 @@ bool mine_marked[30][30]; // Whether we marked this as mine
 int unknown_count;        // Number of unknown cells remaining
 int mines_remaining;      // Number of mines still to be found
 
-extern const int dx[8];
-extern const int dy[8];
+const int client_dx[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
+const int client_dy[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
 
 /**
  * @brief The definition of function InitGame()
@@ -115,8 +115,8 @@ bool find_obvious_move(int &out_r, int &out_c, int &out_type) {
             int marked_around = 0;
 
             for (int d = 0; d < 8; d++) {
-                int ni = i + dx[d];
-                int nj = j + dy[d];
+                int ni = i + client_dx[d];
+                int nj = j + client_dy[d];
                 if (ni < 0 || ni >= rows || nj < 0 || nj >= columns) continue;
                 if (client_grid[ni][nj] == -2) unknown_around++;
                 if (client_grid[ni][nj] == -1 || mine_marked[ni][nj]) marked_around++;
@@ -126,8 +126,8 @@ bool find_obvious_move(int &out_r, int &out_c, int &out_type) {
             if (marked_around == k && unknown_around > 0) {
                 // Find an unknown to open
                 for (int d = 0; d < 8; d++) {
-                    int ni = i + dx[d];
-                    int nj = j + dy[d];
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
                     if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
                         // AutoExplore on this cell (i,j) - it will automatically open all unknown neighbors
                         out_r = i;
@@ -141,8 +141,8 @@ bool find_obvious_move(int &out_r, int &out_c, int &out_type) {
             // If unknown neighbors equals the remaining mines to find, all must be mines - mark them
             if (marked_around + unknown_around == k && unknown_around > 0) {
                 for (int d = 0; d < 8; d++) {
-                    int ni = i + dx[d];
-                    int nj = j + dy[d];
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
                     if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
                         out_r = ni;
                         out_c = nj;
@@ -200,8 +200,8 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
                 // Check if adjacent to any opened cell
                 bool adjacent = false;
                 for (int d = 0; d < 8; d++) {
-                    int ni = i + dx[d];
-                    int nj = j + dy[d];
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
                     if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] >= 0) {
                         adjacent = true;
                         break;
@@ -251,8 +251,8 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
             int marked_around = 0;
 
             for (int d = 0; d < 8; d++) {
-                int ni = i + dx[d];
-                int nj = j + dy[d];
+                int ni = i + client_dx[d];
+                int nj = j + client_dy[d];
                 if (ni < 0 || ni >= rows || nj < 0 || nj >= columns) continue;
                 if (client_grid[ni][nj] == -2) {
                     neighbors_unknown.push_back({ni, nj});
