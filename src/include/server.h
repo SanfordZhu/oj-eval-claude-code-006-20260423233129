@@ -3,6 +3,9 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <queue>
+#include <utility>
+#include <string>
 
 /*
  * You may need to define some global variables for the information of the game map here.
@@ -15,6 +18,24 @@ int columns;      // The count of columns of the game map. You MUST NOT modify i
 int total_mines;  // The count of mines of the game map. You MUST NOT modify its name. You should initialize this
                   // variable in function InitMap. It will be used in the advanced task.
 int game_state;  // The state of the game, 0 for continuing, 1 for winning, -1 for losing. You MUST NOT modify its name.
+
+// Additional global variables for game state
+const int dx[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
+const int dy[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
+
+bool mine[30][30];        // true if this cell is a mine
+int count[30][30];        // number of adjacent mines
+bool visited[30][30];     // true if this cell has been visited
+bool marked[30][30];      // true if this cell is marked as mine
+int visit_count;          // number of visited non-mine cells
+int marked_mine_count;    // number of correctly marked mines
+
+/**
+ * @brief Check if we've won (all non-mine cells visited)
+ */
+bool check_win() {
+  return visit_count == rows * columns - total_mines;
+}
 
 /**
  * @brief The definition of function InitMap()
@@ -30,20 +51,60 @@ int game_state;  // The state of the game, 0 for continuing, 1 for winning, -1 f
  */
 void InitMap() {
   std::cin >> rows >> columns;
-  // TODO (student): Implement me!
+  total_mines = 0;
+  game_state = 0;
+  visit_count = 0;
+  marked_mine_count = 0;
+
+  // Initialize all cells
+  for (int i = 0; i < rows; i++) {
+    for (int j = 0; j < columns; j++) {
+      mine[i][j] = false;
+      count[i][j] = 0;
+      visited[i][j] = false;
+      marked[i][j] = false;
+    }
+  }
+
+  // Read map
+  std::string line;
+  for (int i = 0; i < rows; i++) {
+    std::cin >> line;
+    for (int j = 0; j < columns; j++) {
+      if (line[j] == 'X') {
+        mine[i][j] = true;
+        total_mines++;
+      }
+    }
+  }
+
+  // Precompute mine counts
+  for (int i = 0; i < rows; i++) {
+    for (int j = 0; j < columns; j++) {
+      if (!mine[i][j]) {
+        int cnt = 0;
+        for (int d = 0; d < 8; d++) {
+          int nx = i + dx[d];
+          int ny = j + dy[d];
+          if (nx >= 0 && nx < rows && ny >= 0 && ny < columns && mine[nx][ny]) {
+            cnt++;
+          }
+        }
+        count[i][j] = cnt;
+      }
+    }
+  }
 }
 
 /**
  * @brief The definition of function VisitBlock(int, int)
  *
  * @details This function is designed to visit a block in the game map. We take the 3 * 3 game map above as an example.
- * At the beginning, if you call VisitBlock(0, 0), the return value would be 0 (game continues), and the game map would
- * be
+ * At the beginning, if you call VisitBlock(0, 0), the return value would be 0 (game continues), and the game map would be
  *     1??
  *     ???
  *     ???
- * If you call VisitBlock(0, 1) after that, the return value would be -1 (game ends and the players loses) , and the
- * game map would be
+ * If you call VisitBlock(0, 1) after that, the return value would be -1 (game ends and the players loses) , and the game map would be
  *     1X?
  *     ???
  *     ???
@@ -64,7 +125,56 @@ void InitMap() {
  * @note For invalid operation, you should not do anything.
  */
 void VisitBlock(int r, int c) {
-  // TODO (student): Implement me!
+  // Check if game already ended
+  if (game_state != 0) {
+    return;
+  }
+
+  // If already visited or marked, do nothing
+  if (visited[r][c] || marked[r][c]) {
+    game_state = 0;
+    return;
+  }
+
+  // If clicking on a mine, game over
+  if (mine[r][c]) {
+    visited[r][c] = true;
+    game_state = -1;
+    return;
+  }
+
+  // Flood fill BFS for auto-expansion when count is 0
+  std::queue<std::pair<int, int>> q;
+  q.push({r, c});
+
+  while (!q.empty()) {
+    int x = q.front().first;
+    int y = q.front().second;
+    q.pop();
+
+    if (x < 0 || x >= rows || y < 0 || y >= columns) continue;
+    if (visited[x][y] || marked[x][y]) continue;
+
+    visited[x][y] = true;
+    visit_count++;
+
+    if (count[x][y] == 0) {
+      for (int d = 0; d < 8; d++) {
+        int nx = x + dx[d];
+        int ny = y + dy[d];
+        if (nx >= 0 && nx < rows && ny >= 0 && ny < columns && !visited[nx][ny] && !marked[nx][ny]) {
+          q.push({nx, ny});
+        }
+      }
+    }
+  }
+
+  // Check if we've won
+  if (check_win()) {
+    game_state = 1;
+  } else {
+    game_state = 0;
+  }
 }
 
 /**
@@ -101,7 +211,33 @@ void VisitBlock(int r, int c) {
  * @note For invalid operation, you should not do anything.
  */
 void MarkMine(int r, int c) {
-  // TODO (student): Implement me!
+  // Check if game already ended
+  if (game_state != 0) {
+    return;
+  }
+
+  // If already visited or marked, do nothing
+  if (visited[r][c] || marked[r][c]) {
+    game_state = 0;
+    return;
+  }
+
+  // Mark it
+  marked[r][c] = true;
+
+  if (mine[r][c]) {
+    // Correctly marked a mine
+    marked_mine_count++;
+    if (check_win()) {
+      game_state = 1;
+    } else {
+      game_state = 0;
+    }
+  } else {
+    // Marked a non-mine, game over
+    visited[r][c] = true;
+    game_state = -1;
+  }
 }
 
 /**
@@ -121,7 +257,47 @@ void MarkMine(int r, int c) {
  * And the game ends (and player wins).
  */
 void AutoExplore(int r, int c) {
-  // TODO (student): Implement me!
+  // Check if game already ended
+  if (game_state != 0) {
+    return;
+  }
+
+  // Can only target visited non-mine grids
+  if (!visited[r][c] || mine[r][c]) {
+    game_state = 0;
+    return;
+  }
+
+  // Count number of marked mines around
+  int marked_around = 0;
+  for (int d = 0; d < 8; d++) {
+    int nx = r + dx[d];
+    int ny = c + dy[d];
+    if (nx >= 0 && nx < rows && ny >= 0 && ny < columns && marked[nx][ny]) {
+      marked_around++;
+    }
+  }
+
+  // If the number of marked mines equals the mine count, visit all unmarked neighbors
+  if (marked_around == count[r][c]) {
+    for (int d = 0; d < 8; d++) {
+      int nx = r + dx[d];
+      int ny = c + dy[d];
+      if (nx >= 0 && nx < rows && ny >= 0 && ny < columns && !visited[nx][ny] && !marked[nx][ny]) {
+        VisitBlock(nx, ny);
+        if (game_state != 0) {
+          return;
+        }
+      }
+    }
+  }
+
+  // Check if we've won after operations
+  if (check_win()) {
+    game_state = 1;
+  } else {
+    game_state = 0;
+  }
 }
 
 /**
@@ -134,7 +310,13 @@ void AutoExplore(int r, int c) {
  * @note If the player wins, we consider that ALL mines are correctly marked.
  */
 void ExitGame() {
-  // TODO (student): Implement me!
+  if (game_state == 1) {
+    std::cout << "YOU WIN!" << std::endl;
+    std::cout << visit_count << " " << total_mines << std::endl;
+  } else {
+    std::cout << "GAME OVER!" << std::endl;
+    std::cout << visit_count << " " << marked_mine_count << std::endl;
+  }
   exit(0);  // Exit the game immediately
 }
 
@@ -163,7 +345,35 @@ void ExitGame() {
  * @note Use std::cout to print the game map, especially when you want to try the advanced task!!!
  */
 void PrintMap() {
-  // TODO (student): Implement me!
+  for (int i = 0; i < rows; i++) {
+    for (int j = 0; j < columns; j++) {
+      if (game_state == 1) {
+        // Victory: output @ for all mine grids regardless of marked status
+        if (mine[i][j]) {
+          std::cout << '@';
+        } else {
+          std::cout << (char)('0' + count[i][j]);
+        }
+      } else {
+        if (marked[i][j]) {
+          if (mine[i][j]) {
+            std::cout << '@';
+          } else {
+            std::cout << 'X';
+          }
+        } else if (!visited[i][j]) {
+          std::cout << '?';
+        } else {
+          if (mine[i][j]) {
+            std::cout << 'X';
+          } else {
+            std::cout << (char)('0' + count[i][j]);
+          }
+        }
+      }
+    }
+    std::cout << std::endl;
+  }
 }
 
 #endif
