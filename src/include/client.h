@@ -189,20 +189,28 @@ int mine_count[100];
 bool current_assignment[100];
 
 void backtrack(int var_idx, int mines_placed, int total_vars, const std::vector<Constraint> &constraints) {
-    // Prune if we can't satisfy constraints
+    // Prune if we can't satisfy constraints with current assignment
     if (mines_placed > mines_remaining) return;
     if (mines_placed + (total_vars - var_idx) < mines_remaining) return;
 
-    if (var_idx == total_vars) {
-        // Check all constraints
-        for (const Constraint &c : constraints) {
-            int cnt = 0;
-            for (int v : c.vars) {
-                if (current_assignment[v]) cnt++;
+    // Check all constraints that are fully assigned so far to catch impossibilities early
+    for (const Constraint &c : constraints) {
+        int cnt = 0;
+        int unknown = 0;
+        for (int v : c.vars) {
+            if (v >= var_idx) {
+                unknown++;
+                continue;
             }
-            if (cnt != c.required) return;
+            if (current_assignment[v]) cnt++;
         }
-        // Valid solution found
+        // Check if even in best/worst case we can't reach the required count
+        if (cnt + unknown < c.required) return; // can't get enough mines even if all remaining unknown are mines
+        if (cnt > c.required) return; // too many mines already
+    }
+
+    if (var_idx == total_vars) {
+        // All checked, valid solution found
         total_solutions++;
         for (int i = 0; i < total_vars; i++) {
             if (current_assignment[i]) mine_count[i]++;
@@ -292,7 +300,7 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
                 }
 
                 // If component is small enough, do full constraint solving
-                if (component.size() <= 20) {
+                if (component.size() <= 25) {
                     // Map cell to index in component
                     int cell_index[30][30];
                     for (int x = 0; x < rows; x++) {
