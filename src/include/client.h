@@ -229,19 +229,18 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
         }
     }
 
-    // Build probability map - count how many times each frontier cell is forced to be a mine
+    // Build probability map - all unknown cells start with base probability
     double mine_prob[30][30] = {0};
+    double base_p = (double)mines_remaining / unknown_count;
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
-            mine_prob[i][j] = 1.0;  // default: full probability for non-frontier
+            if (client_grid[i][j] == -2) {
+                mine_prob[i][j] = base_p;
+            }
         }
     }
 
-    for (auto &cell : frontier) {
-        mine_prob[cell.first][cell.second] = 0;
-    }
-
-    // For each opened cell, calculate probability based on the constraint
+    // For each opened cell, adjust probability based on the constraint
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
             if (client_grid[i][j] < 0) continue;
@@ -268,34 +267,53 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
 
             double p = (double)required_mines / neighbors_unknown.size();
             for (auto &n : neighbors_unknown) {
-                if (mine_prob[n.first][n.second] < p || mine_prob[n.first][n.second] == 0) {
+                if (p > mine_prob[n.first][n.second]) {
                     mine_prob[n.first][n.second] = p;
                 }
             }
         }
     }
 
-    // For non-frontier unknowns, the base probability is just mines_remaining / unknown_count
-    double base_p = (double)mines_remaining / unknown_count;
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < columns; j++) {
-            if (client_grid[i][j] == -2 && !in_frontier[i][j]) {
-                mine_prob[i][j] = base_p;
-            }
-        }
-    }
-
     // Find the unknown cell with minimum probability of being a mine
+    // When probabilities are equal, choose cell with fewer adjacent unknowns (more constrained, more information gain)
     double min_p = 2.0;
+    int min_unknown = 9;  // max possible unknown adjacent is 8
     out_r = 0;
     out_c = 0;
 
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
-            if (client_grid[i][j] == -2 && mine_prob[i][j] < min_p) {
+            if (client_grid[i][j] != -2) continue;
+
+            if (mine_prob[i][j] < min_p) {
+                // Count unknown neighbors
+                int unknown_adjacent = 0;
+                for (int d = 0; d < 8; d++) {
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
+                    if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
+                        unknown_adjacent++;
+                    }
+                }
                 min_p = mine_prob[i][j];
+                min_unknown = unknown_adjacent;
                 out_r = i;
                 out_c = j;
+            } else if (mine_prob[i][j] == min_p) {
+                // Count unknown neighbors
+                int unknown_adjacent = 0;
+                for (int d = 0; d < 8; d++) {
+                    int ni = i + client_dx[d];
+                    int nj = j + client_dy[d];
+                    if (ni >= 0 && ni < rows && nj >= 0 && nj < columns && client_grid[ni][nj] == -2) {
+                        unknown_adjacent++;
+                    }
+                }
+                if (unknown_adjacent < min_unknown) {
+                    min_unknown = unknown_adjacent;
+                    out_r = i;
+                    out_c = j;
+                }
             }
         }
     }
