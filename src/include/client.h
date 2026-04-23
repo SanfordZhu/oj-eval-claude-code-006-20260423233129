@@ -300,7 +300,7 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
                 }
 
                 // If component is small enough, do full constraint solving
-                if (component.size() <= 25) {
+                if (component.size() <= 28) {
                     // Map cell to index in component
                     int cell_index[30][30];
                     for (int x = 0; x < rows; x++) {
