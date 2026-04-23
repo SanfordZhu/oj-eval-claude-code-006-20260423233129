@@ -229,18 +229,19 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
         }
     }
 
-    // Build probability map - all unknown cells start with base probability
+    // Build probability map
     double mine_prob[30][30] = {0};
+    // For non-frontier unknowns, default probability based on global mine density
     double base_p = (double)mines_remaining / unknown_count;
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
-            if (client_grid[i][j] == -2) {
+            if (client_grid[i][j] == -2 && !in_frontier[i][j]) {
                 mine_prob[i][j] = base_p;
             }
         }
     }
 
-    // For each opened cell, adjust probability based on the constraint
+    // For each opened cell, calculate probability based on the constraint
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < columns; j++) {
             if (client_grid[i][j] < 0) continue;
@@ -267,7 +268,7 @@ void find_best_guess(int &out_r, int &out_c, int &out_type) {
 
             double p = (double)required_mines / neighbors_unknown.size();
             for (auto &n : neighbors_unknown) {
-                if (p > mine_prob[n.first][n.second]) {
+                if (mine_prob[n.first][n.second] < p || (in_frontier[n.first][n.second] && mine_prob[n.first][n.second] == 0)) {
                     mine_prob[n.first][n.second] = p;
                 }
             }
